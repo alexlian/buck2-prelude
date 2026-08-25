@@ -425,7 +425,7 @@ def generate_rustdoc_test(
         common_args.args,
         extern_arg([], attr_crate(ctx), rlib),
         "--extern=proc_macro" if ctx.attrs.proc_macro else [],
-        cmd_args(compile_ctx.linker_with_pre_args, format = "-Clinker={}"),
+        _linker_arg(compile_ctx, compile_ctx.linker_with_pre_args),
         cmd_args(linker_argsfile, format = "-Clink-arg=@{}"),
         runtool,
         cmd_args(internal_tools_info.rustdoc_test_with_resources, format = "--test-runtool-arg={}"),
@@ -718,7 +718,7 @@ def rust_compile(
             rustc_cmd.add(cmd_args(linker_argsfile, format = "-Clink-arg=@{}"))
             linker = compile_ctx.linker_with_pre_args
 
-        rustc_cmd.add(cmd_args(linker, format = "-Clinker={}"))
+        rustc_cmd.add(_linker_arg(compile_ctx, linker))
 
     if toolchain_info.rust_target_path != None:
         emit_op.env["RUST_TARGET_PATH"] = toolchain_info.rust_target_path[DefaultInfo].default_outputs[0]
@@ -1126,8 +1126,6 @@ def _compute_common_args(
     tempfile = "{}-{}".format(attr_simple_crate_for_filenames(ctx), emit.value)
 
     root = crate_root(ctx, default_roots)
-    if compile_ctx.exec_is_windows:
-        root = root.replace("/", "\\")
 
     # With `advanced_unstable_linking`, we unconditionally pass the metadata
     # artifacts. There are two things that work together to make this possible
@@ -1873,3 +1871,13 @@ def rust_link_shared(ctx: AnalysisContext, compile_ctx: CompileContext, dep_link
         ),
         name = compile_ctx.soname,
     ).linked_object
+
+# rustc runs a `.bat` linker wrapper through `cmd /c <path>`, and cmd.exe
+# rejects a `/`-separated path there. The wrapper is an exec-platform-local
+# artifact (a Windows host can only ever link for itself), so re-spelling
+# just this argument with backslashes leaks nothing a shared digest could
+# have carried. Library (rlib/rmeta) actions never see it.
+def _linker_arg(compile_ctx: CompileContext, linker) -> cmd_args:
+    if compile_ctx.exec_is_windows:
+        return cmd_args(linker, format = "-Clinker={}", replace_regex = ("/", "\\\\"))
+    return cmd_args(linker, format = "-Clinker={}")

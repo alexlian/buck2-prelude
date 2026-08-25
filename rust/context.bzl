@@ -126,7 +126,10 @@ def compile_context(ctx: AnalysisContext, binary: bool = False) -> CompileContex
         sysroot_args = cmd_args()
 
     exec_is_windows = ctx.attrs._exec_os_type[OsLookup].os == Os("windows")
-    path_sep = "\\" if exec_is_windows else "/"
+    # Always "/": rustc accepts it on Windows, and the separator is part of
+    # every action digest, so a platform-dependent one keeps hosts from ever
+    # sharing a digest.
+    path_sep = "/"
 
     return CompileContext(
         clippy_wrapper = clippy_wrapper,

@@ -115,6 +115,60 @@ def _tar_strip_prefix_flags(strip_prefix: [str, None]) -> list[str]:
         return ["--strip-components=" + str(count), strip_prefix]
     return []
 
+def _finish_sub_targets(output: Artifact, sub_targets: list[str] | dict[str, list[str]]):
+    if type(sub_targets) == type([]):
+        return {path: [DefaultInfo(default_output = output.project(path))] for path in sub_targets}
+    elif type(sub_targets) == type({}):
+        return {name: [DefaultInfo(default_outputs = [output.project(path) for path in paths])] for name, paths in sub_targets.items()}
+    else:
+        fail("sub_targets must be a list or dict")
+
+# The shell-free unpack. The generated `.sh` / `.bat` script exists only to
+# `mkdir` + `cd` before tar runs, and the `cd` is what ties the Windows half
+# to backslashes (cmd.exe rejects `cd a/b/c`). tar takes its destination as
+# an argument instead (`-C`), spelled the same by GNU tar and bsdtar, so the
+# argv is byte-identical on every execution platform. The one thing tar will
+# not do is create the `-C` directory, and buck2 creates only the *parent* of
+# a declared output -- so the extraction output is declared as
+# `<tmp>/<strip_prefix>`: buck2 creates `<tmp>`, tar creates `<strip_prefix>`
+# inside it, and a native copy_dir renames it to the requested output name
+# (the same shape the zip path below uses when the tool cannot strip).
+def _unarchive_tar_shell_free(
+        ctx: AnalysisContext,
+        archive: Artifact,
+        output_name: str,
+        ext_type: str,
+        strip_prefix: str,
+        prefer_local: bool,
+        exec_is_windows: bool,
+        sub_targets: list[str] | dict[str, list[str]],
+        has_content_based_path: bool):
+    prefix = strip_prefix.strip("/")
+    expect("/" not in prefix, "shell-free unpack expects a single-component strip_prefix: {}".format(strip_prefix))
+    extracted = ctx.actions.declare_output(output_name + "_tmp", prefix, dir = True, has_content_based_path = False)
+    ctx.actions.run(
+        cmd_args(
+            "tar",
+            _TAR_FLAGS[ext_type],
+            "-x",
+            "-f",
+            archive,
+            "-C",
+            cmd_args(extracted.as_output(), parent = 1),
+            prefix,
+        ),
+        category = "http_archive",
+        identifier = output_name,
+        prefer_local = prefer_local,
+        # Off on Windows: NTFS has no mode bit and buck2's Windows executor
+        # marks every extension-less file executable in the directory digest,
+        # so a Windows-authored entry describes the same tree differently
+        # from a Linux-authored one. Windows still consumes the Linux entry.
+        allow_cache_upload = not exec_is_windows,
+    )
+    output = ctx.actions.copy_dir(output_name, extracted, has_content_based_path = has_content_based_path)
+    return output, _finish_sub_targets(output, sub_targets)
+
 def unarchive(
     ctx: AnalysisContext,
     archive: Artifact,
@@ -128,6 +182,9 @@ def unarchive(
     has_content_based_path: bool = False,
 ):
     exec_is_windows = exec_deps.exec_os_type[OsLookup].os == Os("windows")
+
+    if ext_type in _TAR_FLAGS and strip_prefix and not excludes:
+        return _unarchive_tar_shell_free(ctx, archive, output_name, ext_type, strip_prefix, prefer_local, exec_is_windows, sub_targets, has_content_based_path)
 
     if exec_is_windows:
         ext = "bat"

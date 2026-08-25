@@ -96,6 +96,10 @@ def main():
         new_args_file.write(new_args_content)
         new_args_file_name = new_args_file.name
 
+    # A `.bat` linker (the msvc toolchain's wrappers) is run through
+    # `cmd /c`, which rejects a `/`-separated path; spell it natively.
+    if os.name == "nt":
+        linker_real = os.path.normpath(linker_real)
     command = [linker_real, "@" + new_args_file_name]
     subprocess.run(command, check=True)
 
