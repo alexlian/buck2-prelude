@@ -101,7 +101,7 @@ def _make_rustc_shim(ctx: AnalysisContext, cwd: Artifact) -> cmd_args:
         language = ctx.attrs._exec_os_type[OsLookup].script,
     )
 
-    return cmd_args(shim, relative_to = cwd)
+    return _native_script_path(ctx, cmd_args(shim, relative_to = cwd))
 
 def _make_cc_shim(ctx: AnalysisContext, name: str, cmd: cmd_args) -> cmd_args:
     """
@@ -221,7 +221,7 @@ def _make_cc_shim(ctx: AnalysisContext, name: str, cmd: cmd_args) -> cmd_args:
     else:
         fail(language)
 
-    return cmd_args(wrapper, hidden = [internal_tools_info.from_any_dir, cmd])
+    return _native_script_path(ctx, cmd_args(wrapper, hidden = [internal_tools_info.from_any_dir, cmd]))
 
 def _cargo_buildscript_impl(ctx: AnalysisContext) -> list[Provider]:
     cxx_toolchain_info = ctx.attrs._cxx_toolchain[CxxToolchainInfo]
@@ -464,3 +464,13 @@ def buildscript_run(
         manifest_dir = manifest_dir,
         **kwargs,
     )
+
+# Build scripts run `$RUSTC` / `$CC` through a shell on Windows (cc-rs and
+# `buildscript_run.py` both do), and a `.bat` reached via a `/`-separated
+# path is rejected by cmd.exe. These shims are exec-platform-local, so
+# spelling them natively leaks nothing into a digest another host could
+# share.
+def _native_script_path(ctx: AnalysisContext, path: cmd_args) -> cmd_args:
+    if ctx.attrs._exec_os_type[OsLookup].os == Os("windows"):
+        return cmd_args(path, replace_regex = ("/", "\\\\"))
+    return path

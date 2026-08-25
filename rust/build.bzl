@@ -433,7 +433,7 @@ def generate_rustdoc_test(
         common_args.args,
         extern_arg([], attr_crate(ctx), rlib),
         "--extern=proc_macro" if ctx.attrs.proc_macro else [],
-        cmd_args(compile_ctx.linker_with_pre_args, format = "-Clinker={}"),
+        _linker_arg(compile_ctx, compile_ctx.linker_with_pre_args),
         cmd_args(linker_argsfile, format = "-Clink-arg=@{}"),
         runtool,
         cmd_args(internal_tools_info.rustdoc_test_with_resources, format = "--test-runtool-arg={}"),
@@ -780,7 +780,7 @@ def rust_compile(
         dwp_inputs.append(link_args_output.link_args)
 
         rustc_cmd.add(cmd_args(linker_argsfile, format = "-Clink-arg=@{}"))
-        rustc_cmd.add(cmd_args(compile_ctx.linker_with_pre_args, format = "-Clinker={}"))
+        rustc_cmd.add(_linker_arg(compile_ctx, compile_ctx.linker_with_pre_args))
     elif extracts_objects:
         # rustc only compiles; the caller links the extracted objects through
         # cxx (see `rust_link_binary`), and the link args are constructed
@@ -793,7 +793,7 @@ def rust_compile(
             # FIXME(JakobDegen): Better explain why this is needed
             archive_objects = _dist_thinlto_enabled(ctx, compile_ctx),
         )
-        rustc_cmd.add(cmd_args(link_extraction.linker_wrapper, format = "-Clinker={}"))
+        rustc_cmd.add(_linker_arg(compile_ctx, link_extraction.linker_wrapper))
 
     if toolchain_info.rust_target_path != None:
         emit_op.env["RUST_TARGET_PATH"] = toolchain_info.rust_target_path[DefaultInfo].default_outputs[0]
@@ -1241,8 +1241,6 @@ def _compute_common_args(
     tempfile = "{}-{}".format(attr_simple_crate_for_filenames(ctx), emit.value)
 
     root = crate_root(ctx, default_roots)
-    if compile_ctx.exec_is_windows:
-        root = root.replace("/", "\\")
 
     dep_metadata_kind = dep_metadata_of_emit(emit)
 
@@ -2172,3 +2170,13 @@ def rust_link_binary(
             allow_cache_upload = allow_cache_upload,
         ),
     )
+
+# rustc runs a `.bat` linker wrapper through `cmd /c <path>`, and cmd.exe
+# rejects a `/`-separated path there. The wrapper is an exec-platform-local
+# artifact (a Windows host can only ever link for itself), so re-spelling
+# just this argument with backslashes leaks nothing a shared digest could
+# have carried. Library (rlib/rmeta) actions never see it.
+def _linker_arg(compile_ctx: CompileContext, linker) -> cmd_args:
+    if compile_ctx.exec_is_windows:
+        return cmd_args(linker, format = "-Clinker={}", replace_regex = ("/", "\\\\"))
+    return cmd_args(linker, format = "-Clinker={}")
