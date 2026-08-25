@@ -1,0 +1,6 @@
+# Checked out by buck2 as an external cell on every seat, including Windows
+# boxes with core.autocrlf=true. The tool scripts here (rust/tools/*.py and
+# friends) are inputs to action digests, so the checkout must be byte-exact
+# on every host or Windows- and Linux-authored digests diverge on line
+# endings alone. No conversion, ever.
+* -text
