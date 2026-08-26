@@ -21,8 +21,14 @@ def unquote(argument):
         return argument
 
 
+# Either separator: the execution platform decides how buck2 renders paths
+# (`use_windows_path_separators`), and rustc's own linker-arguments file --
+# which `expand_args` splices in below -- joins onto whatever it was given.
+# A `\`-only test silently skips the absolutization below for a `/`-rendered
+# path, and the relative path then reaches `link.exe`, which fails with
+# LNK1181 once it resolves past 260 characters.
 def is_relative_buck_out_path(argument):
-    return argument.startswith("buck-out\\")
+    return argument.startswith(("buck-out/", "buck-out\\"))
 
 
 def is_library_path(argument):
