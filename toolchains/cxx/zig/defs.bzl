@@ -121,14 +121,6 @@ load(
     "LinkStyle",
 )
 load(
-    "@prelude//os_lookup:defs.bzl",
-    "ScriptLanguage",
-)
-load(
-    "@prelude//utils:cmd_script.bzl",
-    "cmd_script",
-)
-load(
     ":releases.bzl",
     "releases",
 )
@@ -326,30 +318,26 @@ def _cxx_zig_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
     dist = ctx.attrs.distribution[ZigDistributionInfo]
     zig = ctx.attrs.distribution[RunInfo]
     target = ["-target", ctx.attrs.target] if ctx.attrs.target else []
-    zig_cc = cmd_script(
-        actions = ctx.actions,
-        name = "zig_cc",
-        cmd = cmd_args(zig, "cc"),
-        language = ScriptLanguage("bat" if dist.os == "windows" else "sh"),
-    )
-    zig_cxx = cmd_script(
-        actions = ctx.actions,
-        name = "zig_cxx",
-        cmd = cmd_args(zig, "c++"),
-        language = ScriptLanguage("bat" if dist.os == "windows" else "sh"),
-    )
-    zig_ar = cmd_script(
-        actions = ctx.actions,
-        name = "zig_ar",
-        cmd = cmd_args(zig, "ar"),
-        language = ScriptLanguage("bat" if dist.os == "windows" else "sh"),
-    )
-    zig_ranlib = cmd_script(
-        actions = ctx.actions,
-        name = "zig_ranlib",
-        cmd = cmd_args(zig, "ranlib"),
-        language = ScriptLanguage("bat" if dist.os == "windows" else "sh"),
-    )
+    # Hand each tool to its consumer as a bare `<zig> <subcommand>` cmd_args
+    # rather than pre-baking it into a `cmd_script` wrapper.
+    #
+    # `cmd_script` writes the zig path into the generated script's TEXT,
+    # rendered relative to the project root. That is correct for a consumer
+    # that runs the tool from the project root -- which the prelude's own cxx
+    # and rust rules do -- and unusable for one that does not. A `cc`-crate
+    # build script is the second kind: the runner chdirs into a per-crate
+    # working directory and sets CC/CXX/AR to its own shims, rendered relative
+    # to *that* directory. The outer shim then resolves, the inner
+    # `cmd_script` wrapper does not, and the compile dies with exit 127.
+    #
+    # Handing over the raw cmd_args lets each consumer render the tool path in
+    # its own frame of reference. Consumers that need a single-argument tool
+    # already wrap it themselves (see the `cmd_script` docstring, which uses
+    # exactly this toolchain's linker as its example).
+    zig_cc = cmd_args(zig, "cc")
+    zig_cxx = cmd_args(zig, "c++")
+    zig_ar = cmd_args(zig, "ar")
+    zig_ranlib = cmd_args(zig, "ranlib")
     return [ctx.attrs.distribution[DefaultInfo]] + cxx_toolchain_infos(
         internal_tools = ctx.attrs._cxx_internal_tools[CxxInternalTools],
         platform_name = dist.arch,
