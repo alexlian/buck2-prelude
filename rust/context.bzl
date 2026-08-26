@@ -213,7 +213,9 @@ def _clippy_wrapper(ctx: AnalysisContext, toolchain_info: RustToolchainInfo) -> 
 
     skip_setting_sysroot = toolchain_info.explicit_sysroot_deps != None or toolchain_info.sysroot_path != None
 
-    if ctx.attrs._exec_os_type[OsLookup].os == Os("windows"):
+    exec_is_windows = ctx.attrs._exec_os_type[OsLookup].os == Os("windows")
+
+    if exec_is_windows:
         wrapper_file, _ = ctx.actions.write(
             ctx.actions.declare_output("__clippy_driver_wrapper.bat", has_content_based_path = True),
             [
@@ -266,6 +268,15 @@ def _clippy_wrapper(ctx: AnalysisContext, toolchain_info: RustToolchainInfo) -> 
             allow_args = True,
             has_content_based_path = True,
         )
+
+    # `rustc_action.py` spawns this wrapper by its buck-out path as argv[0],
+    # and CreateProcess routes a `.bat` through cmd.exe, which rejects a
+    # `/`-separated path. The wrapper is exec-platform-local by construction --
+    # its own filename is `.bat` here and `.sh` elsewhere, so a clippy action
+    # digest is already split by exec platform and re-spelling this argument
+    # natively leaks nothing a shared digest could have carried.
+    if exec_is_windows:
+        return cmd_args(wrapper_file, hidden = [clippy_driver, rustc_print_sysroot], replace_regex = ("/", "\\\\"))
 
     return cmd_args(wrapper_file, hidden = [clippy_driver, rustc_print_sysroot])
 
