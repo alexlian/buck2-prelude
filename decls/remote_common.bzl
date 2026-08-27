@@ -63,6 +63,11 @@ def _unarchive_args():
              any of the given patterns will be omitted.
         """,
         ),
+        # The target configuration's OS, used by the unpack to decide whether
+        # its own executor is the only kind of producer that can mint this
+        # action's digest. See the `allow_cache_upload` reasoning in
+        # http_archive/unarchive.bzl.
+        "_target_os_type": attrs.default_only(attrs.dep(default = "prelude//os_lookup/targets:os_lookup")),
         "exec_deps": attrs.exec_dep(
             providers = [HttpArchiveExecDeps],
             default = "prelude//http_archive/tools:exec_deps",

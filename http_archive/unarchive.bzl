@@ -140,7 +140,7 @@ def _unarchive_tar_shell_free(
         ext_type: str,
         strip_prefix: str,
         prefer_local: bool,
-        exec_is_windows: bool,
+        exec_matches_target: bool,
         sub_targets: list[str] | dict[str, list[str]],
         has_content_based_path: bool):
     prefix = strip_prefix.strip("/")
@@ -160,11 +160,20 @@ def _unarchive_tar_shell_free(
         category = "http_archive",
         identifier = output_name,
         prefer_local = prefer_local,
-        # Off on Windows: NTFS has no mode bit and buck2's Windows executor
-        # marks every extension-less file executable in the directory digest,
-        # so a Windows-authored entry describes the same tree differently
-        # from a Linux-authored one. Windows still consumes the Linux entry.
-        allow_cache_upload = not exec_is_windows,
+        # Publish only when this executor's OS is the only one that can mint
+        # this action's digest -- i.e. when the target configuration's OS is
+        # the executor's own. Hosts describe an identical tree differently
+        # (NTFS has no mode bit, so buck2's Windows executor marks every
+        # extension-less file executable in the directory digest), and the
+        # configuration's OS constraint is inside the unpack's argv, so a
+        # host-native unpack is unreachable by any other OS's executor and is
+        # safe to publish. A cross-OS unpack is not: there its digest collides
+        # with the native producer's, and the two disagree about the tree.
+        # Consuming stays on either way. What still differs between an entry
+        # authored by one OS and the same tree authored by another is the
+        # executable flag on extension-less files, which matters only to a
+        # consumer that executes a file straight out of the tree.
+        allow_cache_upload = exec_matches_target,
     )
     output = ctx.actions.copy_dir(output_name, extracted, has_content_based_path = has_content_based_path)
     return output, _finish_sub_targets(output, sub_targets)
@@ -181,10 +190,12 @@ def unarchive(
     sub_targets: list[str] | dict[str, list[str]],
     has_content_based_path: bool = False,
 ):
-    exec_is_windows = exec_deps.exec_os_type[OsLookup].os == Os("windows")
+    exec_os = exec_deps.exec_os_type[OsLookup].os
+    exec_is_windows = exec_os == Os("windows")
+    exec_matches_target = exec_os == ctx.attrs._target_os_type[OsLookup].os
 
     if ext_type in _TAR_FLAGS and strip_prefix and not excludes:
-        return _unarchive_tar_shell_free(ctx, archive, output_name, ext_type, strip_prefix, prefer_local, exec_is_windows, sub_targets, has_content_based_path)
+        return _unarchive_tar_shell_free(ctx, archive, output_name, ext_type, strip_prefix, prefer_local, exec_matches_target, sub_targets, has_content_based_path)
 
     if exec_is_windows:
         ext = "bat"
