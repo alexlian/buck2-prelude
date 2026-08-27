@@ -129,7 +129,9 @@ def _finish_sub_targets(output: Artifact, sub_targets: list[str] | dict[str, lis
 # a declared output -- so the extraction output is declared as
 # `<tmp>/<strip_prefix>`: buck2 creates `<tmp>`, tar creates `<strip_prefix>`
 # inside it, and a native copy_dir renames it to the requested output name
-# (the same shape the zip path below uses when the tool cannot strip).
+# (the same shape the zip path below uses when the tool cannot strip -- which
+# since the 09-01 prelude is the Linux zip route alone, as `needs_strip_prefix`
+# is now hardcoded False on Windows and the PowerShell unpack strips in tar).
 def _unarchive_tar_shell_free(
         ctx: AnalysisContext,
         archive: Artifact,
@@ -137,7 +139,7 @@ def _unarchive_tar_shell_free(
         ext_type: str,
         strip_prefix: str,
         prefer_local: bool,
-        exec_is_windows: bool,
+        exec_matches_target: bool,
         sub_targets: list[str] | dict[str, list[str]],
         has_content_based_path: bool):
     prefix = strip_prefix.strip("/")
@@ -157,11 +159,20 @@ def _unarchive_tar_shell_free(
         category = "http_archive",
         identifier = output_name,
         prefer_local = prefer_local,
-        # Off on Windows: NTFS has no mode bit and buck2's Windows executor
-        # marks every extension-less file executable in the directory digest,
-        # so a Windows-authored entry describes the same tree differently
-        # from a Linux-authored one. Windows still consumes the Linux entry.
-        allow_cache_upload = not exec_is_windows,
+        # Publish only when this executor's OS is the only one that can mint
+        # this action's digest -- i.e. when the target configuration's OS is
+        # the executor's own. Hosts describe an identical tree differently
+        # (NTFS has no mode bit, so buck2's Windows executor marks every
+        # extension-less file executable in the directory digest), and the
+        # configuration's OS constraint is inside the unpack's argv, so a
+        # host-native unpack is unreachable by any other OS's executor and is
+        # safe to publish. A cross-OS unpack is not: there its digest collides
+        # with the native producer's, and the two disagree about the tree.
+        # Consuming stays on either way. What still differs between an entry
+        # authored by one OS and the same tree authored by another is the
+        # executable flag on extension-less files, which matters only to a
+        # consumer that executes a file straight out of the tree.
+        allow_cache_upload = exec_matches_target,
     )
     output = ctx.actions.copy_dir(output_name, extracted, has_content_based_path = has_content_based_path)
     return output, _finish_sub_targets(output, sub_targets)
@@ -178,10 +189,33 @@ def unarchive(
     sub_targets: list[str] | dict[str, list[str]],
     has_content_based_path: bool = False,
 ):
-    exec_is_windows = exec_deps.exec_os_type[OsLookup].os == Os("windows")
+    exec_os = exec_deps.exec_os_type[OsLookup].os
+    exec_is_windows = exec_os == Os("windows")
+    exec_matches_target = exec_os == ctx.attrs._target_os_type[OsLookup].os
 
-    if ext_type in _TAR_FLAGS and strip_prefix and not excludes:
-        return _unarchive_tar_shell_free(ctx, archive, output_name, ext_type, strip_prefix, prefer_local, exec_is_windows, sub_targets, has_content_based_path)
+    # Intercepted before the platform split below, so on Windows this bypasses
+    # `_windows_unpack_ps1` -- including the eden fix it exists for. That fix
+    # resolves buck-out's physical path in PowerShell because buck-out is a
+    # symlink on an eden checkout, and the bsdtar that ships with Windows
+    # refuses to extract when a segment of its cwd is a symlink. `-C` makes the
+    # raw buck-out path tar's cwd, so the shell-free unpack reintroduces exactly
+    # that failure on an eden-backed Windows seat.
+    #
+    # Accepted deliberately: no consumer of this fork is eden-backed today,
+    # while all of them share a digest space across Windows and Linux, and
+    # `_windows_unpack_ps1` is Windows-only by construction -- adopting it here
+    # would put the exec OS back inside the unpack's argv, which is the whole
+    # thing the shell-free path and the cache-upload gate above exist to avoid.
+    # If an eden seat ever appears, this is the trade to revisit; the fix is a
+    # narrower condition here, not a change to the function itself.
+    #
+    # tar.zst is excluded because Windows bsdtar has no `--use-compress-program`
+    # and hangs rather than failing when handed one. Upstream carries a
+    # decompress-to-scratch-file workaround for it; the shell-free path never
+    # had a working Windows route for tar.zst, so it forfeits nothing real by
+    # falling through to that.
+    if ext_type in _TAR_FLAGS and ext_type != "tar.zst" and strip_prefix and not excludes:
+        return _unarchive_tar_shell_free(ctx, archive, output_name, ext_type, strip_prefix, prefer_local, exec_matches_target, sub_targets, has_content_based_path)
 
     # The excludes listing runs `tar --list` and redirects it to a file; keep it
     # in the shell whose redirect writes raw bytes (cmd on Windows, sh else).
