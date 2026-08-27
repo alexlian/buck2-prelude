@@ -134,7 +134,7 @@ def _strategy_params(ctx: AnalysisContext, compile_ctx: CompileContext) -> dict[
     return params
 
 def _rust_binary_common(
-    ctx: AnalysisContext, compile_ctx: CompileContext, default_roots: list[str], extra_flags: list[str], allow_cache_upload: bool
+    ctx: AnalysisContext, compile_ctx: CompileContext, default_roots: list[str], extra_flags: list[typing.Any], allow_cache_upload: bool
 ) -> (list[Provider], cmd_args):
     toolchain_info = compile_ctx.toolchain_info
 
@@ -564,7 +564,7 @@ def rust_test_impl(ctx: AnalysisContext) -> list[Provider]:
     compile_ctx = compile_context(ctx, binary = True)
     toolchain_info = compile_ctx.toolchain_info
 
-    extra_flags = toolchain_info.rustc_test_flags or []
+    extra_flags = list(toolchain_info.rustc_test_flags or [])
     if ctx.attrs.framework:
         extra_flags += ["--test"]
 
