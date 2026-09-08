@@ -37,7 +37,17 @@ def main():
     original_cwd = args.cwd.resolve()
     interim_cwd = Path.cwd().resolve()
     if original_cwd.is_relative_to(interim_cwd):
-        interim_cwd = interim_cwd.relative_to(original_cwd, walk_up=True)
+        # `Path.relative_to(..., walk_up=True)` is Python 3.12+, and this tool
+        # runs under whatever interpreter the execution platform provides --
+        # Debian bookworm, for one, ships 3.11. `os.path.relpath` is the same
+        # purely lexical computation and is available on every version we
+        # target. The guard above means `original_cwd` is a descendant of
+        # `interim_cwd`, so the result is `..` components only; neither call
+        # consults the process cwd, both arguments already being absolute and
+        # resolved. The one case where the two diverge -- paths on different
+        # Windows drives, where `relpath` raises -- cannot be reached, because
+        # `is_relative_to` is false across drives and this branch is not taken.
+        interim_cwd = Path(os.path.relpath(interim_cwd, original_cwd))
 
     placeholder = "\\${..}\\" if os.name == "nt" else "${..}/"
     cc = [arg.replace(placeholder, f"{interim_cwd}{os.sep}") for arg in args.cc]
