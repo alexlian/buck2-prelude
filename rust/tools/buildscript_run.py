@@ -180,6 +180,14 @@ def run_buildscript(
         print(f"Failed to run {buildscript} because {ex}", file=sys.stderr)
         sys.exit(1)
     except subprocess.CalledProcessError as ex:
+        # `check_output` captured the build script's stdout, and a build script
+        # says everything it has to say there -- cc-rs and friends report
+        # compiler diagnostics as `cargo:warning=` lines on stdout, not stderr.
+        # Exiting on the code alone presents a failed C compile as a bare exit
+        # status with nothing on stderr at all. `check_rustc_works` above
+        # already surfaces `ex.stdout`; do the same here.
+        if ex.stdout:
+            eprint(ex.stdout)
         sys.exit(ex.returncode)
 
 
