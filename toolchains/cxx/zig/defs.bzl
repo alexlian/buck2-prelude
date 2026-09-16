@@ -167,13 +167,20 @@ ZigDistributionInfo = provider(
 )
 
 def _zig_distribution_impl(ctx: AnalysisContext) -> list[Provider]:
-    dst = ctx.actions.declare_output("zig", has_content_based_path = False)
     path_tpl = "{}/" + ctx.attrs.prefix + "/zig" + ctx.attrs.suffix
     src = cmd_args(ctx.attrs.dist[DefaultInfo].default_outputs[0], format = path_tpl)
-    ctx.actions.run(
-        ["ln", "-sf", cmd_args(src, relative_to = (dst, 1)), dst.as_output()],
-        category = "cp_compiler",
-    )
+    if ctx.attrs.os == "windows":
+        # Run zig in place. zig locates its `lib/` relative to its own
+        # executable, and `ln -sf` on a Windows host without symlink rights
+        # copies the binary away from it ("unable to find zig installation
+        # directory").
+        dst = src
+    else:
+        dst = ctx.actions.declare_output("zig", has_content_based_path = False)
+        ctx.actions.run(
+            ["ln", "-sf", cmd_args(src, relative_to = (dst, 1)), dst.as_output()],
+            category = "cp_compiler",
+        )
 
     compiler = cmd_args(
         [dst],
@@ -234,7 +241,9 @@ def _http_archive_impl(ctx: AnalysisContext) -> list[Provider]:
         has_content_based_path = False,
     )
     ctx.actions.run(
-        cmd_args(["/bin/sh", script], hidden = [archive, output.as_output()]),
+        # `sh` off PATH rather than `/bin/sh`: a Windows exec host cannot spawn an
+        # absolute POSIX path, and `sh` resolves identically on Linux and macOS.
+        cmd_args(["sh", script], hidden = [archive, output.as_output()]),
         category = "http_archive",
     )
 
@@ -314,10 +323,23 @@ def _get_linker_type(os: str) -> LinkerType:
     else:
         fail("Cannot determine linker type: Unknown OS '{}'".format(os))
 
+def _target_os(target: [None, str], dist_os: str) -> str:
+    # The linker type describes what the toolchain PRODUCES, so it follows the
+    # `-target` triple when one is given. The distribution's os is the exec host
+    # that runs zig, which differs from the target on a cross-compiling host
+    # (a Windows host linking ELF must still get a GNU-style linker).
+    if not target:
+        return dist_os
+    parts = target.split("-")
+    if len(parts) > 1 and parts[1] in ("linux", "macos", "freebsd", "windows"):
+        return parts[1]
+    return dist_os
+
 def _cxx_zig_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
     dist = ctx.attrs.distribution[ZigDistributionInfo]
     zig = ctx.attrs.distribution[RunInfo]
     target = ["-target", ctx.attrs.target] if ctx.attrs.target else []
+    linker_type = _get_linker_type(_target_os(ctx.attrs.target, dist.os))
     # Hand each tool to its consumer as a bare `<zig> <subcommand>` cmd_args
     # rather than pre-baking it into a `cmd_script` wrapper.
     #
@@ -389,9 +411,9 @@ def _cxx_zig_toolchain_impl(ctx: AnalysisContext) -> list[Provider]:
             # requires_objects = None,
             # supports_distributed_thinlto = None,
             independent_shlib_interface_linker_flags = ctx.attrs.shared_library_interface_flags,
-            type = _get_linker_type(dist.os),
+            type = linker_type,
             use_archiver_flags = True,
-            is_pdb_generated = is_pdb_generated(_get_linker_type(dist.os), ctx.attrs.linker_flags),
+            is_pdb_generated = is_pdb_generated(linker_type, ctx.attrs.linker_flags),
         ),
         binary_utilities_info = BinaryUtilitiesInfo(
             dwp = None,
