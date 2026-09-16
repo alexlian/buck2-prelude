@@ -13,6 +13,8 @@ See explanation in buck2/prelude/rust/cargo_buildscript.bzl:_make_cc_shim
 
 import argparse
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from pprint import pformat
@@ -75,6 +77,13 @@ def main():
 
     os.chdir(args.cwd)
     try:
+        if os.name == "nt":
+            # Windows has no exec: `os.execl` spawns the child and exits this
+            # process without waiting, so the caller reads our exit status
+            # before the compiler has run. It also does not search PATH, which
+            # a bare interpreter such as `bash` in front of a shell shim needs.
+            program = shutil.which(cc[0]) or cc[0]
+            sys.exit(subprocess.call([program, *cc[1:]]))
         os.execl(cc[0], cc[0], *cc[1:])
     except Exception:
         print(f"exec failed: {pformat(cc)}", file=sys.stderr)
