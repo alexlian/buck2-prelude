@@ -765,6 +765,34 @@ def rust_compile(
                     ".dwo" if split_debug_mode == SplitDebugMode("split") else ".o",
                 )
 
+        # The toolchain's `is_pdb_generated` reads the cxx linker flags, but
+        # rustc adds `/DEBUG` to every MSVC link it drives, so the link writes
+        # a PDB beside the output whatever those flags say. Declare it, or it
+        # is an undeclared file that survives in the output directory and
+        # link.exe updates it in place on the next link: the PDB's GUID and
+        # age, and under `/Brepro` the image's stamp, then depend on the
+        # history of previous links rather than on the inputs.
+        pdb_artifact = link_args_output.pdb_artifact
+        pdb_hidden = []
+        if (
+            pdb_artifact == None and
+            compile_ctx.cxx_toolchain_info.linker_info.type == LinkerType("windows") and
+            _rustc_msvc_link_writes_pdb(
+                [
+                    toolchain_info.rustc_flags,
+                    getattr(ctx.attrs, "rustc_flags", []),
+                    toolchain_info.extra_rustc_flags,
+                    extra_flags,
+                ],
+                extra_link_args,
+            )
+        ):
+            pdb_artifact = ctx.actions.declare_output(
+                paths.replace_extension(emit_op.output.short_path, ".pdb"),
+                has_content_based_path = emit_cbp,
+            )
+            pdb_hidden.append(pdb_artifact.as_output())
+
         linker_argsfile, _ = ctx.actions.write(
             "{}/__{}_linker_args.txt".format(subdir, tempfile),
             cmd_args(link_args_output.link_args, separate_debug_info_args),
@@ -773,10 +801,9 @@ def rust_compile(
         )
         linker_argsfile = cmd_args(
             linker_argsfile,
-            hidden = [link_args_output.hidden, separate_debug_info_args],
+            hidden = [link_args_output.hidden, separate_debug_info_args, pdb_hidden],
         )
 
-        pdb_artifact = link_args_output.pdb_artifact
         dwp_inputs.append(link_args_output.link_args)
 
         rustc_cmd.add(cmd_args(linker_argsfile, format = "-Clink-arg=@{}"))
@@ -1079,6 +1106,34 @@ def _check_restricted_rustc_flags(flags: list[str | ResolvedStringWithMacros | A
                         + "to ensure consistent compilation across the build graph. "
                         + "If you have a legitimate need, set `uses_restricted_rustc_flags = True` on your target.",
                     )
+
+def _last_msvc_debug_word(text: str, last: str | None) -> str | None:
+    for word in text.split(" "):
+        word = word.upper()
+        if word.startswith("/DEBUG") or word.startswith("-DEBUG"):
+            last = word
+    return last
+
+def _rustc_msvc_link_writes_pdb(
+        rustc_flag_lists: list[list[typing.Any]],
+        link_flags: list[typing.Any]) -> bool:
+    """Whether an MSVC link driven by rustc writes a PDB.
+
+    rustc passes `/DEBUG` itself, and user link args follow it on the link
+    line in the order given (rustc flags, then the linker argsfile), so the
+    link writes one unless the last `/DEBUG*` the user adds is `/DEBUG:NONE`.
+    """
+    last = None
+    for flags in rustc_flag_lists:
+        for flag in flags:
+            text = str(flag).strip('"')
+            for prefix in ["-Clink-arg=", "-Clink-args=", "link-arg=", "link-args="]:
+                if text.startswith(prefix):
+                    last = _last_msvc_debug_word(text[len(prefix):], last)
+                    break
+    for flag in link_flags:
+        last = _last_msvc_debug_word(str(flag).strip('"'), last)
+    return last != "/DEBUG:NONE" and last != "-DEBUG:NONE"
 
 def _rustc_flags(flags: list[str | ResolvedStringWithMacros | Artifact], toolchain_info: RustToolchainInfo) -> list[str | ResolvedStringWithMacros | Artifact]:
     # Rustc's "-g" flag is documented as being exactly equivalent to
