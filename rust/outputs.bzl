@@ -85,6 +85,20 @@ def output_as_diag_subtargets(o: RustcOutput, clippy: RustcOutput) -> dict[str, 
         "diag.txt": o.compile_output.diag_txt,
     }
 
+# The diagnostics of a compile the default build itself runs, as
+# `<name>-diag.json` / `<name>-diag.txt`. Unlike `diag.*` above, which come
+# from a separate `infallible_diagnostics` metadata compile, these name the
+# very action the build runs, so requesting one shares that action (and its
+# cache entry) instead of adding a compile. The flip side is that they are
+# exactly as fallible as the build: on a compile error the action fails and
+# the subtarget does not materialize. Use `diag.*` when a failing crate must
+# still produce a diagnostics file.
+def compile_diag_subtargets(name: str, o: RustcOutput) -> dict[str, Artifact]:
+    return {
+        name + "-diag.json": o.compile_output.diag_json,
+        name + "-diag.txt": o.compile_output.diag_txt,
+    }
+
 # Access to additional outputs from Rust compilation.
 #
 # This provider is intended to be available from all rules that compile Rust

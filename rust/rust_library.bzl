@@ -139,6 +139,7 @@ load(
     ":outputs.bzl",
     "RustcExtraOutputsInfo",
     "RustcOutput",  # @unused Used as a type
+    "compile_diag_subtargets",
     "output_as_diag_subtargets",
 )
 load(":proc_macro_alias.bzl", "rust_proc_macro_alias")
@@ -506,7 +507,10 @@ def rust_library_impl(ctx: AnalysisContext) -> list[Provider]:
         rustdoc_test = rustdoc_test,
         doctests_enabled = doctests_enabled,
         re_executors = re_executors,
-        check_artifacts = output_as_diag_subtargets(diag_artifacts[incr_enabled], clippy_artifacts[incr_enabled]),
+        # `rlib-diag.*` is the codegen compile at the check subtargets'
+        # output style (pic archive): the rlib dependents link against.
+        check_artifacts = output_as_diag_subtargets(diag_artifacts[incr_enabled], clippy_artifacts[incr_enabled]) |
+                          compile_diag_subtargets("rlib", param_output[meta_params]),
         expand = expand,
         sources = compile_ctx.symlinked_srcs,
         transitive_srcs = compile_ctx.transitive_srcs,

@@ -126,7 +126,7 @@ load(
     "inherited_shared_libs",
 )
 load(":named_deps.bzl", "write_named_deps_names")
-load(":outputs.bzl", "RustcExtraOutputsInfo", "output_as_diag_subtargets")
+load(":outputs.bzl", "RustcExtraOutputsInfo", "compile_diag_subtargets", "output_as_diag_subtargets")
 load(":profile.bzl", "make_profile_providers")
 load(":resources.bzl", "rust_attr_resources")
 load(":rust_toolchain.bzl", "PanicRuntime", "RustToolchainInfo", "toolchain_supports_miri")
@@ -787,6 +787,10 @@ def _rust_binary_common(
 
     incr_enabled = ctx.attrs.incremental_enabled
     extra_compiled_targets.update(output_as_diag_subtargets(diag_artifacts[incr_enabled], clippy_artifacts[incr_enabled]))
+
+    # The binary compile above (`rustc link`, or `rustc rlib` when the link is
+    # driven by cxx) -- the one `buck2 build` of this target runs.
+    extra_compiled_targets.update(compile_diag_subtargets("link", link))
 
     # Add remarks subtargets (lazy - only built when subtarget requested)
     # Uses `params` to match the actual binary's link strategy
